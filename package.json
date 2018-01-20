@@ -1,0 +1,26 @@
+{
+  "name": "cryptick",
+  "version": "0.0.1",
+  "description": "This project is bootstrapped with [Create Elm App](https://github.com/halfzebra/create-elm-app).",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "build-css": "node-sass-chokidar --include-path ./src --include-path ./node_modules src/ -o src/",
+    "watch-css": "npm run build-css && node-sass-chokidar --include-path ./src --include-path ./node_modules src/ -o src/ --watch --recursive"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feynmanliang/cryptick.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/feynmanliang/cryptick/issues"
+  },
+  "homepage": "https://github.com/feynmanliang/cryptick#readme",
+  "dependencies": {
+    "node-sass-chokidar": "^0.0.3"
+  }
+}
