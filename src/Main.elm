@@ -108,8 +108,7 @@ view model =
                     toString p
     in
         div []
-            [ img [ src "/logo.svg" ] []
-            , h1 [] [ text "GDAX Bitcoin Price" ]
+            [ h1 [] [ text "GDAX Bitcoin Price" ]
             , div [] [ text bitcoinElem ]
             , button [ onClick (RefreshPrice ( BTC, GDAX )) ] [ text "Refresh" ]
             ]
