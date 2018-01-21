@@ -1,8 +1,8 @@
 module Main exposing (..)
 
 import Debug
-import Html exposing (Html, text, div, h1, img, button)
-import Html.Attributes exposing (src)
+import Html exposing (..)
+import Html.Attributes exposing (src, class, id, type_, attribute)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (andThen)
@@ -108,9 +108,28 @@ view model =
                     toString p
     in
         div []
-            [ h1 [] [ text "GDAX Bitcoin Price" ]
-            , div [] [ text bitcoinElem ]
-            , button [ onClick (RefreshPrice ( BTC, GDAX )) ] [ text "Refresh" ]
+            [ header []
+                [ nav [ class "navbar", class "navbar-dark", class "bg-dark" ]
+                    [ div [ class "container", class "d-flex", class "justify-content-between" ]
+                        [ span [ class "navbar-brand", class "d-flex", class "align-items-center" ]
+                            [ span [ id "logo" ] [ text "CT" ]
+                            , strong [] [ text "Cryptick" ]
+                            ]
+                        ]
+                    ]
+                ]
+            , div [ class "jumbotron text-center" ]
+                [ h1 [ class "display-4" ] [ text "Crypto prices" ]
+                , p [ class "lead" ] [ text "Last updated TODO(DATE)" ]
+                , a [ class "btn btn-primary text-white", onClick (RefreshPrice ( BTC, GDAX )) ] [ text "Refresh prices" ]
+                ]
+            , div [ class "container" ]
+                [ div [ class "row" ]
+                    [ div [ class "col-sm" ] [ text ("Bitcoin (GDAX): " ++ bitcoinElem) ]
+                    , div [ class "col-sm" ] [ text "One of three columns" ]
+                    , div [ class "col-sm" ] [ text "One of three columns" ]
+                    ]
+                ]
             ]
 
 
