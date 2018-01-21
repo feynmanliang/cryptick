@@ -1,5 +1,6 @@
 module Main exposing (..)
 
+import Debug
 import Date exposing (Date)
 import Date.Extra.Format as Format
 import Html exposing (..)
@@ -8,17 +9,34 @@ import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (andThen)
 import Task
+import WebSocket
 
 
 ---- MODEL ----
+
+
+gdaxWS : String
+gdaxWS =
+    "wss://ws-feed.gdax.com"
+
+
+type ProductID
+    = BTC_USD
+    | ETH_USD
+    | LTC_USD
 
 
 type alias Price =
     Float
 
 
+type alias Product =
+    { id : ProductID, price : Price }
+
+
 type alias Model =
     { bitcoinPrice : Maybe Price
+    , message : String
     , lastUpdated : Maybe Date
     }
 
@@ -26,56 +44,85 @@ type alias Model =
 init : ( Model, Cmd Msg )
 init =
     ( { bitcoinPrice = Nothing
+      , message = ""
       , lastUpdated = Nothing
       }
-    , getPrice BTC GDAX
+    , Cmd.batch
+        [ getPrice
+        , WebSocket.send gdaxWS """
+{
+    "type": "subscribe",
+    "product_ids": [
+        "BTC-USD",
+        "ETH-USD",
+        "LTC-USD"
+    ],
+    "channels": [
+        "ticker"
+    ]
+}
+"""
+        ]
     )
 
 
-getPrice : Currency -> Exchange -> Cmd Msg
-getPrice currency exchange =
-    case exchange of
-        GDAX ->
-            case currency of
-                BTC ->
-                    Http.send NewPrice
-                        (Http.get "https://api.gdax.com/products/BTC-USD/stats"
-                            (decodeResponse currency exchange)
-                        )
+getPrice : Cmd Msg
+getPrice =
+    Http.send NewPrice
+        (Http.get "https://api.gdax.com/products/BTC-USD/stats"
+            (decodePriceResponse)
+        )
 
 
-decodeResponse : Currency -> Exchange -> Decode.Decoder ( Currency, Exchange, Price )
-decodeResponse currency exchange =
-    let
-        stringToPrice x =
-            case String.toFloat x of
-                Ok n ->
-                    Decode.succeed ( currency, exchange, n )
+decodeStringToPrice : String -> Decode.Decoder Price
+decodeStringToPrice x =
+    case String.toFloat x of
+        Ok n ->
+            Decode.succeed n
 
-                Err _ ->
-                    Decode.fail "could not parse string into a floating point price"
-    in
-        (Decode.field "last" Decode.string)
-            |> andThen stringToPrice
+        Err _ ->
+            Decode.fail "could not parse floating point price"
+
+
+decodeProductID : String -> Decode.Decoder ProductID
+decodeProductID x =
+    case x of
+        "BTC-USD" ->
+            Decode.succeed BTC_USD
+
+        "ETH-USD" ->
+            Decode.succeed ETH_USD
+
+        "LTC-USD" ->
+            Decode.succeed LTC_USD
+
+        _ ->
+            Decode.fail "could not parse product"
+
+
+decodePriceResponse : Decode.Decoder Price
+decodePriceResponse =
+    (Decode.field "last" Decode.string)
+        |> andThen decodeStringToPrice
+
+
+decodeTickerResponse : Decode.Decoder Product
+decodeTickerResponse =
+    Decode.map2 Product
+        ((Decode.field "product_id" Decode.string) |> andThen decodeProductID)
+        ((Decode.field "price" Decode.string) |> andThen decodeStringToPrice)
 
 
 
 ---- UPDATE ----
 
 
-type Exchange
-    = GDAX
-
-
-type Currency
-    = BTC
-
-
 type Msg
     = NoOp
-    | NewPrice (Result Http.Error ( Currency, Exchange, Float ))
-    | RefreshPrice ( Currency, Exchange )
+    | NewPrice (Result Http.Error Float)
+    | RefreshPrice
     | ReceiveLastUpdated Date
+    | NewPriceWS String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -84,7 +131,7 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
-        NewPrice (Ok ( currency, exchange, price )) ->
+        NewPrice (Ok price) ->
             ( { model | bitcoinPrice = Just price }, Task.perform ReceiveLastUpdated Date.now )
 
         NewPrice (Err err) ->
@@ -94,11 +141,27 @@ update msg model =
             in
                 ( model, Cmd.none )
 
-        RefreshPrice ( currency, exchange ) ->
-            ( model, getPrice currency exchange )
+        NewPriceWS message ->
+            let
+                _ =
+                    Debug.log "msg" (Decode.decodeString decodeTickerResponse message)
+            in
+                ( { model | message = message }, Cmd.none )
+
+        RefreshPrice ->
+            ( model, getPrice )
 
         ReceiveLastUpdated date ->
             ( { model | lastUpdated = Just date }, Cmd.none )
+
+
+
+---- SUBSCRIPTIONS ----
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    WebSocket.listen gdaxWS NewPriceWS
 
 
 
@@ -123,7 +186,7 @@ view model =
             , p [ class "lead" ]
                 [ text ("Last updated " ++ (Maybe.withDefault "never" (Maybe.map Format.isoString model.lastUpdated)))
                 ]
-            , a [ class "btn btn-primary text-white", onClick (RefreshPrice ( BTC, GDAX )) ] [ text "Refresh prices" ]
+            , a [ class "btn btn-primary text-white", onClick (RefreshPrice) ] [ text "Refresh prices" ]
             ]
         , div [ class "container" ]
             [ div [ class "row" ]
@@ -147,5 +210,5 @@ main =
         { view = view
         , init = init
         , update = update
-        , subscriptions = always Sub.none
+        , subscriptions = subscriptions
         }
