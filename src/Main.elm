@@ -3,12 +3,10 @@ module Main exposing (..)
 import Debug
 import Date exposing (Date)
 import Date.Extra.Format as Format
+import Dict
 import Html exposing (..)
 import Html.Attributes exposing (src, class, id, type_, attribute)
-import Html.Events exposing (onClick)
-import Http
 import Json.Decode as Decode exposing (andThen)
-import Task
 import WebSocket
 
 
@@ -20,22 +18,21 @@ gdaxWS =
     "wss://ws-feed.gdax.com"
 
 
-type ProductID
-    = BTC_USD
-    | ETH_USD
-    | LTC_USD
-
-
 type alias Price =
     Float
 
 
+
+-- NOTE: id is a String because UDTs are not comparable
+-- see https://github.com/elm-lang/elm-compiler/issues/774
+
+
 type alias Product =
-    { id : ProductID, price : Price }
+    { id : String, price : Price, datetime : Date }
 
 
 type alias Model =
-    { bitcoinPrice : Maybe Price
+    { products : Dict.Dict String Product
     , message : String
     , lastUpdated : Maybe Date
     }
@@ -43,13 +40,11 @@ type alias Model =
 
 init : ( Model, Cmd Msg )
 init =
-    ( { bitcoinPrice = Nothing
+    ( { products = Dict.empty
       , message = ""
       , lastUpdated = Nothing
       }
-    , Cmd.batch
-        [ getPrice
-        , WebSocket.send gdaxWS """
+    , WebSocket.send gdaxWS """
 {
     "type": "subscribe",
     "product_ids": [
@@ -62,16 +57,7 @@ init =
     ]
 }
 """
-        ]
     )
-
-
-getPrice : Cmd Msg
-getPrice =
-    Http.send NewPrice
-        (Http.get "https://api.gdax.com/products/BTC-USD/stats"
-            (decodePriceResponse)
-        )
 
 
 decodeStringToPrice : String -> Decode.Decoder Price
@@ -84,20 +70,14 @@ decodeStringToPrice x =
             Decode.fail "could not parse floating point price"
 
 
-decodeProductID : String -> Decode.Decoder ProductID
-decodeProductID x =
-    case x of
-        "BTC-USD" ->
-            Decode.succeed BTC_USD
-
-        "ETH-USD" ->
-            Decode.succeed ETH_USD
-
-        "LTC-USD" ->
-            Decode.succeed LTC_USD
+decodeStringToDatetime : String -> Decode.Decoder Date
+decodeStringToDatetime x =
+    case Date.fromString x of
+        Ok datetime ->
+            Decode.succeed datetime
 
         _ ->
-            Decode.fail "could not parse product"
+            Decode.fail "could not parse datetime"
 
 
 decodePriceResponse : Decode.Decoder Price
@@ -108,9 +88,10 @@ decodePriceResponse =
 
 decodeTickerResponse : Decode.Decoder Product
 decodeTickerResponse =
-    Decode.map2 Product
-        ((Decode.field "product_id" Decode.string) |> andThen decodeProductID)
+    Decode.map3 Product
+        (Decode.field "product_id" Decode.string)
         ((Decode.field "price" Decode.string) |> andThen decodeStringToPrice)
+        ((Decode.field "time" Decode.string) |> andThen decodeStringToDatetime)
 
 
 
@@ -119,8 +100,6 @@ decodeTickerResponse =
 
 type Msg
     = NoOp
-    | NewPrice (Result Http.Error Float)
-    | RefreshPrice
     | ReceiveLastUpdated Date
     | NewPriceWS String
 
@@ -131,25 +110,22 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
-        NewPrice (Ok price) ->
-            ( { model | bitcoinPrice = Just price }, Task.perform ReceiveLastUpdated Date.now )
-
-        NewPrice (Err err) ->
-            let
-                _ =
-                    Debug.log "err" err
-            in
-                ( model, Cmd.none )
-
         NewPriceWS message ->
-            let
-                _ =
-                    Debug.log "msg" (Decode.decodeString decodeTickerResponse message)
-            in
-                ( { model | message = message }, Cmd.none )
+            case (Decode.decodeString decodeTickerResponse message) of
+                Ok newProduct ->
+                    ( { model
+                        | products = Dict.insert newProduct.id newProduct model.products
+                        , lastUpdated = Just newProduct.datetime
+                      }
+                    , Cmd.none
+                    )
 
-        RefreshPrice ->
-            ( model, getPrice )
+                Err err ->
+                    let
+                        _ =
+                            Debug.log "err" err
+                    in
+                        ( model, Cmd.none )
 
         ReceiveLastUpdated date ->
             ( { model | lastUpdated = Just date }, Cmd.none )
@@ -170,34 +146,46 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    div []
-        [ header []
-            [ nav [ class "navbar", class "navbar-dark", class "bg-dark" ]
-                [ div [ class "container", class "d-flex", class "justify-content-between" ]
-                    [ span [ class "navbar-brand", class "d-flex", class "align-items-center" ]
-                        [ span [ id "logo" ] [ text "CT" ]
-                        , strong [] [ text "CrypTick" ]
+    let
+        cellFor productId =
+            div [ class "col-sm-4 text-center" ]
+                [ text
+                    (productId
+                        ++ ": "
+                        ++ (Maybe.withDefault
+                                "Loading"
+                                (Dict.get productId model.products
+                                    |> (Maybe.map (\x -> toString x.price))
+                                )
+                           )
+                    )
+                ]
+    in
+        div []
+            [ header []
+                [ nav [ class "navbar", class "navbar-dark", class "bg-dark" ]
+                    [ div [ class "container", class "d-flex", class "justify-content-between" ]
+                        [ span [ class "navbar-brand", class "d-flex", class "align-items-center" ]
+                            [ span [ id "logo" ] [ text "CT" ]
+                            , strong [] [ text "CrypTick" ]
+                            ]
                         ]
                     ]
                 ]
-            ]
-        , div [ class "jumbotron text-center" ]
-            [ h1 [ class "display-4" ] [ text "Cryptocurrency price ticker" ]
-            , p [ class "lead" ]
-                [ text ("Last updated " ++ (Maybe.withDefault "never" (Maybe.map Format.isoString model.lastUpdated)))
-                ]
-            , a [ class "btn btn-primary text-white", onClick (RefreshPrice) ] [ text "Refresh prices" ]
-            ]
-        , div [ class "container" ]
-            [ div [ class "row" ]
-                [ div [ class "col-sm-4 text-center" ]
-                    [ text ("Bitcoin (GDAX): " ++ (Maybe.withDefault "Loading" (Maybe.map toString model.bitcoinPrice)))
+            , div [ class "jumbotron text-center" ]
+                [ h1 [ class "display-4" ] [ text "Cryptocurrency price ticker" ]
+                , p [ class "lead" ]
+                    [ text ("Last updated " ++ (Maybe.withDefault "never" (Maybe.map Format.isoString model.lastUpdated)))
                     ]
-                , div [ class "col-sm-4 text-center" ] [ text "One of three columns" ]
-                , div [ class "col-sm-4 text-center" ] [ text "One of three columns" ]
+                ]
+            , div [ class "container" ]
+                [ div [ class "row" ]
+                    [ cellFor "BTC-USD"
+                    , cellFor "LTC-USD"
+                    , cellFor "ETH-USD"
+                    ]
                 ]
             ]
-        ]
 
 
 
