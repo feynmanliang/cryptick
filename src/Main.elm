@@ -1,11 +1,13 @@
 module Main exposing (..)
 
-import Debug
+import Date exposing (Date)
+import Date.Extra.Format as Format
 import Html exposing (..)
 import Html.Attributes exposing (src, class, id, type_, attribute)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (andThen)
+import Task
 
 
 ---- MODEL ----
@@ -16,12 +18,15 @@ type alias Price =
 
 
 type alias Model =
-    { bitcoinPrice : Maybe Price }
+    { bitcoinPrice : Maybe Price
+    , lastUpdated : Maybe Date
+    }
 
 
 init : ( Model, Cmd Msg )
 init =
     ( { bitcoinPrice = Nothing
+      , lastUpdated = Nothing
       }
     , getPrice BTC GDAX
     )
@@ -70,6 +75,7 @@ type Msg
     = NoOp
     | NewPrice (Result Http.Error ( Currency, Exchange, Float ))
     | RefreshPrice ( Currency, Exchange )
+    | ReceiveLastUpdated Date
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -79,7 +85,7 @@ update msg model =
             ( model, Cmd.none )
 
         NewPrice (Ok ( currency, exchange, price )) ->
-            ( { model | bitcoinPrice = Just price }, Cmd.none )
+            ( { model | bitcoinPrice = Just price }, Task.perform ReceiveLastUpdated Date.now )
 
         NewPrice (Err err) ->
             let
@@ -91,6 +97,9 @@ update msg model =
         RefreshPrice ( currency, exchange ) ->
             ( model, getPrice currency exchange )
 
+        ReceiveLastUpdated date ->
+            ( { model | lastUpdated = Just date }, Cmd.none )
+
 
 
 ---- VIEW ----
@@ -98,39 +107,34 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    let
-        bitcoinElem =
-            case model.bitcoinPrice of
-                Nothing ->
-                    "Loading"
-
-                Just p ->
-                    toString p
-    in
-        div []
-            [ header []
-                [ nav [ class "navbar", class "navbar-dark", class "bg-dark" ]
-                    [ div [ class "container", class "d-flex", class "justify-content-between" ]
-                        [ span [ class "navbar-brand", class "d-flex", class "align-items-center" ]
-                            [ span [ id "logo" ] [ text "CT" ]
-                            , strong [] [ text "Cryptick" ]
-                            ]
+    div []
+        [ header []
+            [ nav [ class "navbar", class "navbar-dark", class "bg-dark" ]
+                [ div [ class "container", class "d-flex", class "justify-content-between" ]
+                    [ span [ class "navbar-brand", class "d-flex", class "align-items-center" ]
+                        [ span [ id "logo" ] [ text "CT" ]
+                        , strong [] [ text "Cryptick" ]
                         ]
                     ]
                 ]
-            , div [ class "jumbotron text-center" ]
-                [ h1 [ class "display-4" ] [ text "Crypto prices" ]
-                , p [ class "lead" ] [ text "Last updated TODO(DATE)" ]
-                , a [ class "btn btn-primary text-white", onClick (RefreshPrice ( BTC, GDAX )) ] [ text "Refresh prices" ]
+            ]
+        , div [ class "jumbotron text-center" ]
+            [ h1 [ class "display-4" ] [ text "Crypto prices" ]
+            , p [ class "lead" ]
+                [ text ("Last updated " ++ (Maybe.withDefault "never" (Maybe.map Format.isoString model.lastUpdated)))
                 ]
-            , div [ class "container" ]
-                [ div [ class "row" ]
-                    [ div [ class "col-sm" ] [ text ("Bitcoin (GDAX): " ++ bitcoinElem) ]
-                    , div [ class "col-sm" ] [ text "One of three columns" ]
-                    , div [ class "col-sm" ] [ text "One of three columns" ]
+            , a [ class "btn btn-primary text-white", onClick (RefreshPrice ( BTC, GDAX )) ] [ text "Refresh prices" ]
+            ]
+        , div [ class "container" ]
+            [ div [ class "row" ]
+                [ div [ class "col-sm-4 text-center" ]
+                    [ text ("Bitcoin (GDAX): " ++ (Maybe.withDefault "Loading" (Maybe.map toString model.bitcoinPrice)))
                     ]
+                , div [ class "col-sm-4 text-center" ] [ text "One of three columns" ]
+                , div [ class "col-sm-4 text-center" ] [ text "One of three columns" ]
                 ]
             ]
+        ]
 
 
 
